@@ -1,14 +1,13 @@
-/* Фон презентації — усе в одному WebGL-canvas, щоб браузеру не доводилось
-   змішувати кілька повноекранних шарів щокадру:
-     1) світіння (жар) — рахується в низькій роздільності, воно й так розмите;
+/* Фон презентації — один WebGL-canvas у повній роздільності екрана (Retina):
+     1) світіння: кілька м'яких плям, що повільно літають екраном і зливаються;
      2) великі сірі слова з blend "luminosity" — з готових текстур;
-     3) віньєтка і плівкове зерно.
+     3) віньєтка, тонке плівкове зерно і дизеринг (щоб градієнти не йшли смугами).
 
-   Світіння: головна пляма стоїть там, куди її поставив слайд (data-glow), але
-   постійно "дихає" й блукає, а дві менші жарини мандрують екраном самі по собі.
+   Головна пляма тримається біля точки слайда (data-glow), але плаває широкими
+   петлями в різні боки; три менші жарини мандрують по всьому екрану самі.
 
    API:
-     Bg.set({x, y, sx, sy, i})        — куди тягнеться головна пляма
+     Bg.set({x, y, sx, sy, i})        — "дім" головної плями
      Bg.setWords(top, bottom, strong) — великі слова (strong=false робить їх тихішими)
      Bg.prewarm([[top, bottom], ...]) — заздалегідь підготувати текстури слів        */
 (() => {
@@ -30,19 +29,24 @@
     return;
   }
 
-  /* ---------------- шейдери ---------------- */
+  /* ---------------- шейдер ---------------- */
   const vert = `
     attribute vec2 p;
     void main() { gl_Position = vec4(p, 0.0, 1.0); }
   `;
 
-  const glowFrag = `
+  const frag = `
     precision highp float;
     uniform vec2 u_res;
     uniform float u_time;
-    uniform vec2 u_g0; uniform vec2 u_s0; uniform float u_i0;
-    uniform vec2 u_g1; uniform vec2 u_s1; uniform float u_i1;
-    uniform vec2 u_g2; uniform vec2 u_s2; uniform float u_i2;
+    uniform float u_seed;
+    uniform float u_dim;
+    // 4 плями: xy — центр, zw — розмір; u_int — яскравість кожної
+    uniform vec4 u_b0; uniform vec4 u_b1; uniform vec4 u_b2; uniform vec4 u_b3;
+    uniform vec4 u_int;
+    uniform sampler2D u_ta; uniform sampler2D u_ba; uniform vec3 u_a;
+    uniform sampler2D u_tb; uniform sampler2D u_bb; uniform vec3 u_b;
+    uniform vec2 u_texelA; uniform vec2 u_texelB;
 
     vec3 permute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
     float snoise(vec2 v) {
@@ -66,59 +70,31 @@
       g.yz = a0.yz * x12.xz + h.yz * x12.yw;
       return 130.0 * dot(m, g);
     }
-    float fbm(vec2 p) {
-      float v = 0.0, a = 0.5;
-      for (int i = 0; i < 3; i++) { v += a * snoise(p); p *= 2.03; a *= 0.5; }
-      return v;
-    }
+    // лише низькі частоти — форма "пливе", але поверхня гладенька
+    float fbm(vec2 p) { return 0.65 * snoise(p) + 0.35 * snoise(p * 1.9 + 7.3); }
 
     // чорний -> темно-червоний -> помаранчевий -> жовтий -> майже білий
     vec3 ramp(float t) {
       vec3 c = vec3(0.027, 0.020, 0.018);
-      c = mix(c, vec3(0.32, 0.035, 0.012), smoothstep(0.00, 0.26, t));
-      c = mix(c, vec3(0.86, 0.17, 0.03),  smoothstep(0.20, 0.46, t));
-      c = mix(c, vec3(1.00, 0.52, 0.10),  smoothstep(0.40, 0.66, t));
-      c = mix(c, vec3(1.00, 0.84, 0.42),  smoothstep(0.60, 0.86, t));
-      c = mix(c, vec3(1.00, 0.97, 0.86),  smoothstep(0.84, 1.10, t));
+      c = mix(c, vec3(0.30, 0.03, 0.012), smoothstep(0.00, 0.28, t));
+      c = mix(c, vec3(0.84, 0.16, 0.03),  smoothstep(0.18, 0.48, t));
+      c = mix(c, vec3(1.00, 0.50, 0.10),  smoothstep(0.38, 0.68, t));
+      c = mix(c, vec3(1.00, 0.80, 0.36),  smoothstep(0.62, 0.95, t));
+      c = mix(c, vec3(1.00, 0.96, 0.84),  smoothstep(0.95, 1.4, t));
       return c;
     }
 
-    float blob(vec2 w, vec2 g, vec2 s, float asp) {
-      vec2 d = (w - vec2(g.x * asp, g.y)) / vec2(s.x * asp, s.y);
-      return dot(d, d);
+    float blob(vec2 w, vec4 b, float asp) {
+      vec2 d = (w - vec2(b.x * asp, b.y)) / vec2(b.z * asp, b.w);
+      float r = dot(d, d);
+      return exp(-r * 1.3) + 0.1 * exp(-r * 0.3); // ядро + широкий ореол
     }
 
-    void main() {
-      vec2 uv = gl_FragCoord.xy / u_res;
-      float asp = u_res.x / u_res.y;
-      float t = u_time;
-      vec2 p = vec2(uv.x * asp, uv.y);
-
-      vec2 q = vec2(fbm(p * 1.2 + vec2(0.0, t * 0.04)), fbm(p * 1.2 + vec2(3.7, -t * 0.035)));
-      vec2 w = p + q * 0.13;
-      float flick = 0.88 + 0.22 * fbm(vec2(w.x * 1.5, w.y * 1.2 - t * 0.08));
-
-      float r0 = blob(w, u_g0, u_s0, asp);
-      float v = (exp(-r0 * 1.4) * flick + 0.1 * exp(-r0 * 0.4)) * u_i0;
-      v += exp(-blob(w, u_g1, u_s1, asp) * 1.4) * flick * u_i1;
-      v += exp(-blob(w, u_g2, u_s2, asp) * 1.4) * flick * u_i2;
-
-      gl_FragColor = vec4(ramp(v), 1.0);
+    float hash(vec2 p) {
+      vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      return fract((p3.x + p3.y) * p3.z);
     }
-  `;
-
-  const compFrag = `
-    precision highp float;
-    uniform vec2 u_res;
-    uniform float u_dpr;
-    uniform float u_seed;
-    uniform float u_dim;
-    uniform sampler2D u_glow;
-    uniform sampler2D u_ta; uniform sampler2D u_ba; uniform vec3 u_a;
-    uniform sampler2D u_tb; uniform sampler2D u_bb; uniform vec3 u_b;
-    uniform vec2 u_texelA; uniform vec2 u_texelB;
-
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     float lum(vec3 c) { return dot(c, vec3(0.3, 0.59, 0.11)); }
     vec3 clipColor(vec3 c) {
       float l = lum(c);
@@ -150,10 +126,25 @@
     void main() {
       vec2 uv = gl_FragCoord.xy / u_res;
       float asp = u_res.x / u_res.y;
-      vec3 col = texture2D(u_glow, uv).rgb;
+      float t = u_time;
+      vec2 p = vec2(uv.x * asp, uv.y);
+
+      // повільне "перетікання" простору — плями м'яко деформуються
+      vec2 q = vec2(fbm(p * 0.85 + vec2(0.0, t * 0.03)), fbm(p * 0.85 + vec2(4.1, -t * 0.026)));
+      vec2 w = p + q * 0.17;
+
+      float v = blob(w, u_b0, asp) * u_int.x
+              + blob(w, u_b1, asp) * u_int.y
+              + blob(w, u_b2, asp) * u_int.z
+              + blob(w, u_b3, asp) * u_int.w;
+      v *= 0.93 + 0.1 * fbm(w * 1.1 + vec2(t * 0.02, -t * 0.045));
+      // м'яка компресія: світіння велике й насичене, а біле — лише в самому ядрі
+      v = 1.18 * (1.0 - exp(-v * 1.1));
+
+      vec3 col = ramp(v);
 
       vec2 vv = (uv - 0.5) * vec2(asp, 1.0);
-      col *= 1.0 - 0.38 * smoothstep(0.35, 1.25, length(vv));
+      col *= 1.0 - 0.36 * smoothstep(0.35, 1.3, length(vv));
 
       // великі слова: сірий #616161 у режимі luminosity —
       // на чорному сірі, на жару темно-коричневі
@@ -162,10 +153,12 @@
       float ta = 1.0 - (1.0 - a) * (1.0 - b);
       col = mix(col, setLum(col, 0.38), ta * u_dim);
 
-      // плівкове зерно (overlay), зерно ~1 CSS-піксель
-      float g = hash(floor(gl_FragCoord.xy / u_dpr) + u_seed * 17.31);
-      vec3 ov = mix(2.0 * col * g, 1.0 - 2.0 * (1.0 - col) * (1.0 - g), step(0.5, col));
-      col = mix(col, ov, 0.075);
+      // тонке зерно на рівні фізичного пікселя + дизеринг проти смуг
+      vec2 fc = gl_FragCoord.xy;
+      float n1 = hash(fc + u_seed * 61.7);
+      float n2 = hash(fc.yx + u_seed * 23.1 + 17.0);
+      float grain = n1 + n2 - 1.0;
+      col += grain * (0.012 + 0.03 * sqrt(lum(col)));
 
       gl_FragColor = vec4(col, 1.0);
     }
@@ -178,23 +171,17 @@
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   }
-  function program(fragSrc) {
-    const p = gl.createProgram();
-    gl.attachShader(p, compile(gl.VERTEX_SHADER, vert));
-    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fragSrc));
-    gl.bindAttribLocation(p, 0, 'p');
-    gl.linkProgram(p);
-    const uniforms = {};
-    const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
-    for (let i = 0; i < n; i++) {
-      const name = gl.getActiveUniform(p, i).name;
-      uniforms[name] = gl.getUniformLocation(p, name);
-    }
-    return { p, u: uniforms };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+  gl.bindAttribLocation(prog, 0, 'p');
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  const u = {};
+  for (let i = 0, n = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS); i < n; i++) {
+    const name = gl.getActiveUniform(prog, i).name;
+    u[name] = gl.getUniformLocation(prog, name);
   }
-
-  const glowProg = program(glowFrag);
-  const compProg = program(compFrag);
 
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -219,33 +206,20 @@
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.ALPHA, 1, 1, 0, gl.ALPHA, gl.UNSIGNED_BYTE, new Uint8Array([0]));
   const EMPTY = { t: empty, b: empty, texel: [0, 0] };
 
-  /* ---------------- роздільність і якість ---------------- */
-  // Якщо пристрій не встигає, автоматично знижуємо роздільність (непомітно для ока).
-  const LEVELS = [
-    { dpr: Math.min(devicePixelRatio || 1, 2), glow: 0.4 },
-    { dpr: Math.min(devicePixelRatio || 1, 1.5), glow: 0.33 },
-    { dpr: 1, glow: 0.26 },
-  ];
+  /* ---------------- роздільність ---------------- */
+  // Повна роздільність екрана. Лише якщо пристрій явно не встигає — крок униз.
+  const DPR = Math.min(devicePixelRatio || 1, 2);
+  const LEVELS = [DPR, Math.min(DPR, 1.5), 1];
   let level = 0;
-  const glowTex = makeTex();
-  const fbo = gl.createFramebuffer();
-  let gw = 2, gh = 2;
 
   function resize() {
-    const q = LEVELS[level];
-    canvas.width = Math.max(2, Math.round(innerWidth * q.dpr));
-    canvas.height = Math.max(2, Math.round(innerHeight * q.dpr));
-    gw = Math.max(2, Math.round(innerWidth * q.glow));
-    gh = Math.max(2, Math.round(innerHeight * q.glow));
-    gl.bindTexture(gl.TEXTURE_2D, glowTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gw, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, glowTex, 0);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const d = LEVELS[level];
+    canvas.width = Math.max(2, Math.round(innerWidth * d));
+    canvas.height = Math.max(2, Math.round(innerHeight * d));
   }
 
   /* ---------------- текстури слів ---------------- */
-  const TEXT_DPR = Math.min(devicePixelRatio || 1, 1.5);
+  const TEXT_DPR = DPR;
   const cache = new Map();
   let fontFamily = '';
 
@@ -422,9 +396,12 @@
     gl.uniform2f(uTexel, s.entry.texel[0], s.entry.texel[1]);
   }
 
+  // плавна траєкторія з кількох синусоїд — ніколи не повторюється точно
+  const drift = (t, a, f, ph) => a * (0.7 * Math.sin(t * f + ph) + 0.3 * Math.sin(t * f * 2.31 + ph * 1.7));
+
   function frame(ms) {
     requestAnimationFrame(frame);
-    // не частіше 60 к/с: на 120 Гц екранах (MacBook Pro, iPhone Pro) це вдвічі менше роботи
+    // не частіше 60 к/с: на 120 Гц екранах (MacBook Pro) це вдвічі менше роботи
     if (ms - lastDraw < 15.5) return;
     lastDraw = ms;
 
@@ -432,70 +409,48 @@
     last = ms;
     time += dt * (reduced ? 0.25 : 1);
 
-    // автоякість: якщо кадри стабільно довші за ~24 мс — знижуємо роздільність
+    // автоякість: якщо кадри стабільно довші за ~28 мс — знижуємо роздільність
     if (!document.hidden && level < LEVELS.length - 1) {
       sampled++;
-      if (dt > 0.024) slowFrames++;
-      if (sampled >= 90) {
-        if (slowFrames > 45) { level++; resize(); }
+      if (dt > 0.028) slowFrames++;
+      if (sampled >= 120) {
+        if (slowFrames > 70) { level++; resize(); }
         sampled = 0;
         slowFrames = 0;
       }
     }
 
-    const k = 1 - Math.exp(-dt * 2.4);
+    const k = 1 - Math.exp(-dt * 1.6);
     for (const key in target) state[key] += (target[key] - state[key]) * k;
-    const km = 1 - Math.exp(-dt * 3);
+    const km = 1 - Math.exp(-dt * 2.5);
     mouse.x += (mouse.tx - mouse.x) * km;
     mouse.y += (mouse.ty - mouse.y) * km;
 
     const t = time;
-    // головна пляма блукає навколо точки слайда і "дихає"
-    const g0x = state.x + 0.14 * Math.sin(t * 0.21) + 0.06 * Math.sin(t * 0.47 + 1.7) + mouse.x * 0.05;
-    const g0y = state.y + 0.07 * Math.sin(t * 0.26 + 0.6) + 0.03 * Math.sin(t * 0.53 + 2.1) + mouse.y * 0.03;
-    const breath = 1 + 0.1 * Math.sin(t * 0.33);
-    // дві жарини мандрують екраном
-    const g1x = 0.5 + 0.62 * Math.sin(t * 0.083 + 1.0);
-    const g1y = -0.02 + 0.26 * Math.sin(t * 0.131 + 0.4);
-    const g2x = 0.5 + 0.58 * Math.sin(t * 0.067 + 3.6);
-    const g2y = 0.02 + 0.3 * Math.sin(t * 0.097 + 2.2);
+    const I = state.i;
+    const breath = 1 + 0.12 * Math.sin(t * 0.29);
 
-    // 1) світіння у маленький буфер
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, gw, gh);
-    gl.useProgram(glowProg.p);
-    const gu = glowProg.u;
-    gl.uniform2f(gu.u_res, gw, gh);
-    gl.uniform1f(gu.u_time, t);
-    gl.uniform2f(gu.u_g0, g0x, g0y);
-    gl.uniform2f(gu.u_s0, state.sx * breath, state.sy * breath);
-    gl.uniform1f(gu.u_i0, state.i);
-    gl.uniform2f(gu.u_g1, g1x, g1y);
-    gl.uniform2f(gu.u_s1, 0.32, 0.3);
-    gl.uniform1f(gu.u_i1, 0.55 * state.i);
-    gl.uniform2f(gu.u_g2, g2x, g2y);
-    gl.uniform2f(gu.u_s2, 0.26, 0.26);
-    gl.uniform1f(gu.u_i2, 0.45 * state.i);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    // головна пляма: широкі петлі навколо "дому" слайда
+    gl.uniform4f(u.u_b0,
+      state.x + drift(t, 0.3, 0.11, 0.0) + mouse.x * 0.06,
+      state.y + drift(t, 0.16, 0.083, 1.3) + mouse.y * 0.04,
+      state.sx * breath, state.sy * breath);
+    // жарини літають по всьому екрану, іноді підіймаючись нагору
+    gl.uniform4f(u.u_b1, 0.5 + drift(t, 0.62, 0.071, 1.0), 0.12 + drift(t, 0.42, 0.093, 0.4), 0.42, 0.38);
+    gl.uniform4f(u.u_b2, 0.5 + drift(t, 0.6, 0.058, 3.6), 0.1 + drift(t, 0.46, 0.077, 2.2), 0.36, 0.34);
+    gl.uniform4f(u.u_b3, 0.5 + drift(t, 0.55, 0.049, 5.1), 0.2 + drift(t, 0.5, 0.066, 4.4), 0.3, 0.3);
+    gl.uniform4f(u.u_int, I, 0.55 * I, 0.46 * I, 0.34 * I);
 
-    // 2) збірка на екран: світіння + слова + віньєтка + зерно
-    const tNow = now();
-    stepTween(cur, tNow);
-    stepTween(old, tNow);
+    stepTween(cur, now());
+    stepTween(old, now());
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.useProgram(compProg.p);
-    const cu = compProg.u;
-    gl.uniform2f(cu.u_res, canvas.width, canvas.height);
-    gl.uniform1f(cu.u_dpr, LEVELS[level].dpr);
-    gl.uniform1f(cu.u_seed, reduced ? 0 : Math.floor(t * 7.5) % 64);
-    gl.uniform1f(cu.u_dim, state.dim);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, glowTex);
-    gl.uniform1i(cu.u_glow, 0);
-    bindWord(cur, 1, 2, cu.u_a, cu.u_ta, cu.u_ba, cu.u_texelA);
-    bindWord(old, 3, 4, cu.u_b, cu.u_tb, cu.u_bb, cu.u_texelB);
+    gl.uniform2f(u.u_res, canvas.width, canvas.height);
+    gl.uniform1f(u.u_time, t);
+    gl.uniform1f(u.u_seed, reduced ? 0 : Math.floor(t * 12) % 97);
+    gl.uniform1f(u.u_dim, state.dim);
+    bindWord(cur, 0, 1, u.u_a, u.u_ta, u.u_ba, u.u_texelA);
+    bindWord(old, 2, 3, u.u_b, u.u_tb, u.u_bb, u.u_texelB);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   requestAnimationFrame(frame);
