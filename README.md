@@ -26,3 +26,8 @@ python -m http.server 5173
 - `js/background.js` — шейдер фону
 - `js/glass.js` — рефракція Liquid Glass (Chromium; в Safari/Firefox — матове скло)
 - `js/deck.js` — навігація
+
+## Оновлення
+
+Після змін у CSS/JS збільш номер `?v=` у `index.html` — інакше браузер може
+до 10 хвилин показувати стару версію з кешу.
