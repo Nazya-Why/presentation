@@ -76,17 +76,17 @@
     // палітра без жовтого: чорний -> темно-червоний -> червоний -> помаранчевий
     vec3 ramp(float t) {
       vec3 c = vec3(0.022, 0.016, 0.015);
-      c = mix(c, vec3(0.30, 0.025, 0.012), smoothstep(0.06, 0.28, t));
-      c = mix(c, vec3(0.80, 0.07, 0.02),   smoothstep(0.20, 0.46, t));
-      c = mix(c, vec3(0.97, 0.22, 0.035),  smoothstep(0.40, 0.66, t));
-      c = mix(c, vec3(1.00, 0.38, 0.05),   smoothstep(0.62, 0.92, t));
+      c = mix(c, vec3(0.30, 0.025, 0.012), smoothstep(0.16, 0.36, t));
+      c = mix(c, vec3(0.80, 0.07, 0.02),   smoothstep(0.30, 0.54, t));
+      c = mix(c, vec3(0.97, 0.22, 0.035),  smoothstep(0.48, 0.72, t));
+      c = mix(c, vec3(1.00, 0.38, 0.05),   smoothstep(0.68, 0.94, t));
       return c;
     }
 
     float blob(vec2 w, vec4 b, float asp) {
       vec2 d = (w - vec2(b.x * asp, b.y)) / vec2(b.z * asp, b.w);
       float r = dot(d, d);
-      return exp(-r * 1.3) + 0.1 * exp(-r * 0.3); // ядро + широкий ореол
+      return exp(-r * 1.5) + 0.06 * exp(-r * 0.35); // ядро + ореол
     }
 
     float hash(vec2 p) {
@@ -437,9 +437,9 @@
       state.y + drift(t, 0.16, 0.083, 1.3) + mouse.y * 0.04,
       state.sx * breath, state.sy * breath);
     // жарини літають по всьому екрану, іноді підіймаючись нагору
-    gl.uniform4f(u.u_b1, 0.5 + drift(t, 0.62, 0.071, 1.0), 0.12 + drift(t, 0.42, 0.093, 0.4), 0.42, 0.38);
-    gl.uniform4f(u.u_b2, 0.5 + drift(t, 0.6, 0.058, 3.6), 0.1 + drift(t, 0.46, 0.077, 2.2), 0.36, 0.34);
-    gl.uniform4f(u.u_b3, 0.5 + drift(t, 0.55, 0.049, 5.1), 0.2 + drift(t, 0.5, 0.066, 4.4), 0.3, 0.3);
+    gl.uniform4f(u.u_b1, 0.5 + drift(t, 0.62, 0.071, 1.0), 0.08 + drift(t, 0.42, 0.093, 0.4), 0.34, 0.3);
+    gl.uniform4f(u.u_b2, 0.5 + drift(t, 0.6, 0.058, 3.6), 0.06 + drift(t, 0.46, 0.077, 2.2), 0.3, 0.28);
+    gl.uniform4f(u.u_b3, 0.5 + drift(t, 0.55, 0.049, 5.1), 0.14 + drift(t, 0.5, 0.066, 4.4), 0.25, 0.25);
     gl.uniform4f(u.u_int, I, 0.55 * I, 0.46 * I, 0.34 * I);
 
     stepTween(cur, now());
