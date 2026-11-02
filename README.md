@@ -24,6 +24,7 @@ python -m http.server 5173
 - `index.html` — слайди (`<section class="slide">`), атрибути описані в коментарі над ними
 - `css/style.css` — токени, скло, переходи, макети
 - `js/background.js` — шейдер фону
+- `js/scenes.js` — сцени руху світіння (естафета з кутів, спіраль, схід, поділ, перехрестя, збір, мандрівник, погоня); переглянути одну: `?scene=3`
 - `js/glass.js` — рефракція Liquid Glass (Chromium; в Safari/Firefox — матове скло)
 - `js/deck.js` — навігація
 

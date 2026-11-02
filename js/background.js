@@ -3,11 +3,12 @@
      2) великі сірі слова з blend "luminosity" — з готових текстур;
      3) віньєтка, тонке плівкове зерно і дизеринг (щоб градієнти не йшли смугами).
 
-   Головна пляма весь час подорожує по всьому екрану; слайд (data-glow) задає
-   лише її розмір і яскравість. Три менші жарини мандрують своїми шляхами.
+   Рух плям — це сцени з js/scenes.js (естафета з кутів, спіраль, схід, поділ…),
+   що змінюють одна одну з плавним перетіканням. Слайд (data-glow) задає лише
+   загальну яскравість і масштаб.
 
    API:
-     Bg.set({sx, sy, i})              — розмір і яскравість головної плями
+     Bg.set({sy, i})                  — масштаб і яскравість світіння
      Bg.setWords(top, bottom, strong) — великі слова (strong=false робить їх тихішими)
      Bg.prewarm([[top, bottom], ...]) — заздалегідь підготувати текстури слів        */
 (() => {
@@ -384,7 +385,9 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let last = performance.now();
   let lastDraw = 0;
-  let time = 0;
+  // ?scene=3 — почати одразу з 3-ї сцени (зручно переглядати їх по одній)
+  const startScene = parseInt(new URLSearchParams(location.search).get('scene'), 10);
+  let time = startScene > 0 ? (startScene - 1) * window.GlowScenes.SCENE_LEN + 0.01 : 0;
   let slowFrames = 0, sampled = 0;
 
   function bindWord(s, texUnit, blurUnit, uVec, uTex, uBlur, uTexel) {
@@ -397,9 +400,6 @@
     gl.uniform3f(uVec, s.op, s.blur, s.off);
     gl.uniform2f(uTexel, s.entry.texel[0], s.entry.texel[1]);
   }
-
-  // плавна траєкторія з кількох синусоїд — ніколи не повторюється точно
-  const drift = (t, a, f, ph) => a * (0.7 * Math.sin(t * f + ph) + 0.3 * Math.sin(t * f * 2.31 + ph * 1.7));
 
   function frame(ms) {
     requestAnimationFrame(frame);
@@ -430,20 +430,18 @@
 
     const t = time;
     const I = state.i;
-    const breath = 1 + 0.12 * Math.sin(t * 0.29);
+    const breath = 1 + 0.06 * Math.sin(t * 0.29);
 
-    // головна пляма весь час подорожує по всьому екрану — зліва направо, вгору й униз.
-    // Дві хвилі з різною частотою дають траєкторію, що ніколи точно не повторюється;
-    // ~8–10 с, щоб перетнути екран. Розмір і яскравість задає слайд.
-    gl.uniform4f(u.u_b0,
-      0.5 + 0.47 * (0.75 * Math.sin(t * 0.21) + 0.25 * Math.sin(t * 0.53 + 1.3)) + mouse.x * 0.06,
-      0.2 + 0.42 * (0.7 * Math.sin(t * 0.16 + 0.8) + 0.3 * Math.sin(t * 0.41 + 2.6)) + mouse.y * 0.04,
-      Math.min(state.sx, 1.2) * 0.58 * breath, state.sy * 0.95 * breath);
-    // жарини теж мандрують усім екраном, кожна своїм шляхом
-    gl.uniform4f(u.u_b1, 0.5 + drift(t, 0.6, 0.15, 1.0), 0.12 + drift(t, 0.45, 0.19, 0.4), 0.32, 0.28);
-    gl.uniform4f(u.u_b2, 0.5 + drift(t, 0.58, 0.12, 3.6), 0.1 + drift(t, 0.5, 0.17, 2.2), 0.28, 0.26);
-    gl.uniform4f(u.u_b3, 0.5 + drift(t, 0.55, 0.1, 5.1), 0.18 + drift(t, 0.5, 0.14, 4.4), 0.24, 0.24);
-    gl.uniform4f(u.u_int, 1.12 * I, 0.42 * I, 0.34 * I, 0.26 * I);
+    // плями рухаються за сценами з js/scenes.js; слайд задає загальну яскравість і масштаб
+    const asp = innerWidth / innerHeight;
+    const scale = Math.min(1.2, Math.max(0.85, state.sy / 0.55)) * breath;
+    const blobs = window.GlowScenes.sample(t);
+    const uni = [u.u_b0, u.u_b1, u.u_b2, u.u_b3];
+    blobs.forEach((b, j) => {
+      const r = b.r * scale;
+      gl.uniform4f(uni[j], b.x + mouse.x * 0.05, b.y + mouse.y * 0.035, (r * b.w) / asp, r);
+    });
+    gl.uniform4f(u.u_int, blobs[0].i * I, blobs[1].i * I, blobs[2].i * I, blobs[3].i * I);
 
     stepTween(cur, now());
     stepTween(old, now());

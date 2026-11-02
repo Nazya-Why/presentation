@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=10">
+  <link rel="stylesheet" href="css/style.css?v=11">
 </head>
 <body>
   <canvas id="bg" aria-hidden="true"></canvas>
@@ -28,8 +28,8 @@
       data-top     велике слово на фоні зверху (порожньо = без слова)
       data-bottom  велике слово на фоні знизу
       data-glow    світіння фону: "x y ширина висота яскравість"
-                   пляма сама літає по екрану, тож x/y зараз не використовуються —
-                   діють лише ширина, висота і яскравість
+                   рух плям задають сцени в js/scenes.js, тож тут діють лише
+                   висота (масштаб) і яскравість
     .r  — текстові елементи, що з'являються каскадом
     .rg — скляні елементи, що з'являються каскадом
   -->
@@ -230,8 +230,9 @@
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs id="glass-defs"></defs></svg>
 
-  <script src="js/background.js?v=10"></script>
-  <script src="js/glass.js?v=10"></script>
-  <script src="js/deck.js?v=10"></script>
+  <script src="js/scenes.js?v=11"></script>
+  <script src="js/background.js?v=11"></script>
+  <script src="js/glass.js?v=11"></script>
+  <script src="js/deck.js?v=11"></script>
 </body>
 </html>
