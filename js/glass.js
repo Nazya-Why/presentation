@@ -113,7 +113,10 @@
         <feImage href="${url}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>
         <feGaussianBlur in="SourceGraphic" stdDeviation="${blur}" result="blur"/>
         ${chroma ? chromaChain(scale) : `${disp(scale, 'rgb')}`}
-        <feColorMatrix in="rgb" type="saturate" values="1.35"/>
+        <feColorMatrix in="rgb" type="saturate" values="1.4" result="sat"/>
+        <feComponentTransfer in="sat">
+          <feFuncR type="linear" slope="1.08"/><feFuncG type="linear" slope="1.08"/><feFuncB type="linear" slope="1.08"/>
+        </feComponentTransfer>
       </filter>`);
     el.style.backdropFilter = `url(#${id})`;
   }
